@@ -199,6 +199,7 @@ def split_into_segments(text: str, max_chars: int = SEGMENT_CHARS) -> List[Tuple
             # Đoạn này một mình đã quá dài → xả buffer rồi cắt nó theo câu.
             _flush(buf, "para")
             buf, buf_len = [], 0
+            para_start = len(segments)   # để chốt gap "para" sau khi xong cả đoạn
             sent_buf: List[str] = []
             sent_len = 0
             for sent in _SENT_SPLIT_RE.split(para):
@@ -214,7 +215,8 @@ def split_into_segments(text: str, max_chars: int = SEGMENT_CHARS) -> List[Tuple
                     if pieces:
                         for piece in pieces:
                             segments.append([piece, "minor"])
-                        segments[-1][1] = "sentence"   # hết câu rồi
+                        segments[-1][1] = "sentence"   # hết câu (có thể bị nâng
+                        #                                lên "para" ở cuối đoạn)
                     continue
                 if sent_buf and sent_len + len(sent) + 1 > max_chars:
                     segments.append([" ".join(sent_buf), "sentence"])
@@ -222,8 +224,13 @@ def split_into_segments(text: str, max_chars: int = SEGMENT_CHARS) -> List[Tuple
                 sent_buf.append(sent)
                 sent_len += len(sent) + 1
             if sent_buf:
-                # Ranh giới sau mảnh cuối của đoạn này là ranh giới ĐOẠN.
-                segments.append([" ".join(sent_buf), "para"])
+                segments.append([" ".join(sent_buf), "sentence"])
+            # Ranh giới sau mảnh CUỐI của đoạn này là ranh giới ĐOẠN — chốt ở đây,
+            # sau khi đã xử lý xong cả đoạn. Gán sớm hơn (ngay trong nhánh cắt câu
+            # hoặc cắt từ) thì mảnh cuối giữ gap "sentence" và ranh giới đoạn chỉ
+            # được nghỉ 0,50 s thay vì 0,70 s.
+            if len(segments) > para_start:
+                segments[-1][1] = "para"
             continue
 
         if buf and buf_len + len(para) + 2 > max_chars:
@@ -297,7 +304,9 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool, progress=None
     Không giới hạn độ dài: văn bản dài được cắt đoạn, sinh lần lượt và GHI DẦN
     xuống file WAV, nên RAM chỉ giữ một đoạn tại một thời điểm.
 
-    Trả về ``(đường_dẫn_wav, dòng_trạng_thái)``.
+    Là GENERATOR, không phải hàm thường: mỗi đoạn xong thì yield một lần. Nhờ đó
+    nút Dừng huỷ được thật (xem ghi chú ở chỗ yield) và trạng thái cập nhật dần.
+    Yield ``(None, trạng_thái)`` trong lúc chạy, ``(đường_dẫn_wav, tổng_kết)`` khi xong.
     """
     import gradio as gr
     import numpy as np
@@ -360,11 +369,24 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool, progress=None
                         fh.write(np.zeros(pad, dtype=np.float32))
                         n_samples += pad
                 prev_wav, prev_gap = wav, gap
+
+                # Điểm nhả duy nhất cho nút Dừng. Gradio KHÔNG cắt ngang được một
+                # hàm thường đang chạy (Python không kill thread giữa chừng) — huỷ
+                # một hàm thường chỉ bỏ kết quả, CPU vẫn chạy nốt hàng giờ. Với
+                # generator thì Gradio đóng generator, GeneratorExit bật lên đúng
+                # chỗ yield này, và ta dừng thật ở ranh giới đoạn.
+                if i + 1 < total:
+                    yield None, (
+                        f"⏳ Đang sinh đoạn {i + 1}/{total} · "
+                        f"đã có {_fmt_duration(n_samples / sr)} audio"
+                    )
             if prev_wav is not None:
                 fh.write(prev_wav)
                 n_samples += len(prev_wav)
-    except Exception:
-        # Đừng để lại file WAV dở dang giả vờ là kết quả hợp lệ.
+    except BaseException:
+        # GeneratorExit (bấm Dừng) là BaseException, không phải Exception — phải
+        # bắt cả hai, nếu không bản dở dang sẽ nằm lại trong thư mục output và
+        # trông y như một kết quả hợp lệ.
         out_path.unlink(missing_ok=True)
         raise
 
@@ -381,7 +403,7 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool, progress=None
     if rtf:
         parts.append(f"📊 RTF {rtf:.2f} ({1 / rtf:.1f}× real-time)")
     parts.append(f"📁 Đã lưu: {out_path}")
-    return str(out_path), "\n".join(parts)
+    yield str(out_path), "\n".join(parts)
 
 
 # ── Giao diện ─────────────────────────────────────────────────────────────────
@@ -520,6 +542,10 @@ def main() -> None:
     # từ sys.modules thay vì cùng lúc import lần đầu. Không bắt buộc, nhưng
     # tránh hẳn một lớp lỗi import khó tái hiện trong bản đóng gói.
     demo = build_ui()
+    # queue() phải bật thì gr.Progress và `cancels` mới hoạt động. Gradio 4+ tạo
+    # sẵn hàng đợi, nhưng gọi thẳng ở đây để hành vi không phụ thuộc mặc định của
+    # từng phiên bản — app này chạy trên cả gradio 5 lẫn 6.
+    demo.queue()
     preload_in_background()
 
     # inbrowser: xem should_open_browser() — mặc định bật ở bản đóng gói, tắt được
