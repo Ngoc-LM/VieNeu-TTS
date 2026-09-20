@@ -1,0 +1,78 @@
+name: Build Windows app (VieNeu Voice Clone)
+
+# Build app desktop CPU/ONNX cho Windows bằng PyInstaller.
+# PyInstaller không cross-compile, nên job này BẮT BUỘC chạy trên windows-latest.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "app-v*"
+  pull_request:
+    paths:
+      - "apps/voice_clone_app.py"
+      - "packaging/**"
+      - ".github/workflows/build-windows-app.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cài phụ thuộc (torch-free, CPU/ONNX)
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -e .
+          python -m pip install pyinstaller==6.22.3
+
+      - name: Kiểm tra app import được trước khi đóng gói
+        run: python -c "import apps.voice_clone_app as a; a.build_ui(); print('UI OK')"
+
+      - name: Đóng gói bằng PyInstaller
+        working-directory: packaging
+        run: pyinstaller vieneu_clone.spec --noconfirm --clean
+
+      - name: Chạy thử exe (smoke test)
+        shell: pwsh
+        # App phục vụ Gradio trên cổng 7861. Không tải model ở bước này (mất vài
+        # trăm MB); chỉ cần chứng minh exe khởi động và trả HTTP là bundle đủ.
+        env:
+          VIENEU_PORT: "7861"
+        run: |
+          $exe = "dist\VieNeuVoiceClone\VieNeuVoiceClone.exe"
+          $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
+          $ok = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 5
+            try {
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:7861/" -UseBasicParsing -TimeoutSec 10
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+            if ($p.HasExited) { throw "App thoát sớm với exit code $($p.ExitCode)." }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "App không phản hồi trên http://127.0.0.1:7861 sau 150s." }
+          Write-Host "✅ Smoke test đạt."
+        working-directory: packaging
+
+      - name: Nén bundle
+        working-directory: packaging
+        shell: pwsh
+        run: |
+          Copy-Item DOC_NGUOI_DUNG.txt dist\VieNeuVoiceClone\DOC_TRUOC_KHI_CHAY.txt -Force
+          Compress-Archive -Path dist\VieNeuVoiceClone -DestinationPath dist\VieNeuVoiceClone-win64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VieNeuVoiceClone-win64
+          path: packaging/dist/VieNeuVoiceClone-win64.zip
+          retention-days: 14

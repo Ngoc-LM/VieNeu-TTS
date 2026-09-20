@@ -160,6 +160,8 @@ pythonpath = ["src"]
 
 [project.scripts]
 vieneu-web = "apps.gradio_main:main"
+# App desktop tối giản chỉ dành cho voice cloning (xem packaging/README.md).
+vieneu-clone = "apps.voice_clone_app:main"
 vieneu-stream = "apps.web_stream:main"
 
 [tool.setuptools]
