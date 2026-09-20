@@ -50,6 +50,9 @@ jobs:
           # vụ được HTTP. Đồng thời kiểm luôn đường xuống cấp êm — model nạp lỗi
           # thì app phải vẫn mở chứ không tắt.
           HF_HUB_OFFLINE: "1"
+          # Không mở trình duyệt: bản đóng gói mặc định tự mở, nhưng runner thì
+          # chỉ tổ mọc ra vài tiến trình msedge phải dọn ở cuối job.
+          VIENEU_OPEN_BROWSER: "0"
         run: |
           $exe = "dist\VieNeuVoiceClone\VieNeuVoiceClone.exe"
           $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
