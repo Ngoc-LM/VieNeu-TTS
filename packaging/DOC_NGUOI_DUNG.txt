@@ -56,6 +56,12 @@ GẶP LỖI?
 LƯU Ý QUAN TRỌNG
 ----------------
 Chỉ nhân bản giọng của chính bạn, hoặc giọng mà bạn đã được chủ giọng
-đồng ý rõ ràng. Audio tạo ra có đóng dấu chìm (watermark).
+đồng ý rõ ràng.
+
+App này KHÔNG đóng dấu chìm (watermark) vào audio tạo ra. Tính năng
+watermark cần thư viện resemble-perth (kéo theo torch, rất nặng) nên
+không gộp vào bản đóng gói CPU gọn nhẹ này. Nếu bạn cần watermark, hãy
+chạy từ mã nguồn và cài thêm:
+      pip install vieneu[watermark]
 
 Dự án gốc: https://github.com/pnnbao97/VieNeu-TTS

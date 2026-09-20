@@ -27,10 +27,19 @@ hiddenimports = []
 # ── Gradio ────────────────────────────────────────────────────────────────────
 # Gradio phục vụ frontend từ các file tĩnh nằm trong package, và runtime của nó
 # gọi inspect.getsource() lên chính code Python của mình → phải gom cả data lẫn
-# source (xem module_collection_mode ở cuối file).
+# source (xem MODULE_COLLECTION_MODE ngay bên dưới).
 for pkg in ("gradio", "gradio_client", "safehttpx", "groovy"):
-    datas += collect_data_files(pkg, include_py_files=True)
+    datas += collect_data_files(pkg)
     hiddenimports += collect_submodules(pkg)
+
+# Gradio đọc source của chính nó lúc chạy (inspect.getsource) → phải giữ dạng .py
+# trên đĩa thay vì nén vào PYZ. Biến này BẮT BUỘC truyền vào Analysis(); đặt nó
+# làm biến toàn cục trong file spec không có tác dụng gì, vì PyInstaller exec
+# spec rồi không đọc lại tên đó.
+MODULE_COLLECTION_MODE = {
+    "gradio": "py",
+    "gradio_client": "py",
+}
 
 # ── ONNX Runtime ──────────────────────────────────────────────────────────────
 # Các .dll của provider không được PyInstaller phát hiện qua import tĩnh.
@@ -86,6 +95,7 @@ a = Analysis(
     excludes=excludes,
     noarchive=False,
     optimize=0,
+    module_collection_mode=MODULE_COLLECTION_MODE,
 )
 
 pyz = PYZ(a.pure)
@@ -120,9 +130,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="VieNeuVoiceClone",
 )
-
-# Gradio đọc source của chính nó lúc chạy → phải giữ dạng .py, không nén vào PYZ.
-module_collection_mode = {
-    "gradio": "py",
-    "gradio_client": "py",
-}

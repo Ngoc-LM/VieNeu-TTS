@@ -121,6 +121,7 @@ venv build một lần nữa cho chắc.
 - **Cần Internet ở lần chạy đầu** để tải model.
 - **Giới hạn 3000 ký tự** mỗi lần tạo; văn bản dài hơn cần chia nhỏ.
 - Bản `.exe` **chưa được ký số**, nên SmartScreen/antivirus có thể cảnh báo.
+- **Không có watermark** trong bản đóng gói (xem §6).
 - App chạy được trên **cả gradio 5 và gradio 6** (`pyproject` khai báo
   `gradio>=5.49.1`, nên `uv sync` theo lockfile ra bản 5 còn `pip install`
   mới ra bản 6). Sửa giao diện thì kiểm trên cả hai.
@@ -128,4 +129,11 @@ venv build một lần nữa cho chắc.
 ## 6. Lưu ý sử dụng
 
 Chỉ nhân bản giọng của chính bạn hoặc giọng bạn có sự đồng ý rõ ràng của chủ
-giọng. Audio do app tạo ra được đóng dấu chìm (watermark) theo mặc định của SDK.
+giọng.
+
+**Bản đóng gói không đóng dấu chìm (watermark).** SDK chỉ bật watermarker khi
+import được `resemble-perth` (extra `vieneu[watermark]`, kéo theo torch); bundle
+này cố tình loại torch nên `BaseVieneuTTS._init_watermarker()` để `watermarker =
+None` và `_apply_watermark()` trả audio nguyên vẹn. Cần watermark thì chạy từ
+source với `pip install vieneu[watermark]`, hoặc bỏ torch khỏi `excludes` trong
+spec và thêm extra vào script build — đổi lại bundle phình thêm khoảng 2 GB.

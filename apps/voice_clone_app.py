@@ -15,6 +15,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -144,7 +145,11 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool):
     rtf = elapsed / duration if duration else 0.0
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUTPUT_DIR / f"vieneu_{time.strftime('%Y%m%d_%H%M%S')}.wav"
+    # Hậu tố ngẫu nhiên: mốc thời gian tới giây thôi thì hai lần tạo sát nhau
+    # (hoặc hai tab cùng bấm) sẽ ra trùng tên và file trước bị ghi đè — trong khi
+    # app hứa với người dùng là mọi kết quả đều được lưu lại.
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    out_path = OUTPUT_DIR / f"vieneu_{stamp}_{uuid.uuid4().hex[:8]}.wav"
     tts.save(audio, out_path)
 
     status = (
@@ -253,10 +258,17 @@ def build_ui():
         )
 
         # Người dùng chỉ được quyền dùng giọng mình có quyền sử dụng — nói rõ trong UI.
+        # KHÔNG hứa watermark ở đây: bản đóng gói loại torch, mà watermark
+        # (resemble-perth) lại cần torch, nên SDK để watermarker = None và audio
+        # đi ra KHÔNG có dấu chìm. Hứa sai một thuộc tính an toàn còn tệ hơn là
+        # không có nó, vì người dùng sẽ tin vào thứ không tồn tại.
         gr.Markdown(
             "---\n"
-            "⚠️ Chỉ nhân bản giọng của chính bạn hoặc giọng bạn có sự đồng ý rõ ràng của chủ giọng. "
-            "Audio tạo ra được đóng dấu chìm (watermark)."
+            "⚠️ **Chỉ nhân bản giọng của chính bạn, hoặc giọng bạn đã được chủ giọng "
+            "đồng ý rõ ràng.**\n\n"
+            "ℹ️ Bản app này **không** đóng dấu chìm (watermark) vào audio. Nếu cần "
+            "watermark, hãy chạy từ source và cài thêm `pip install vieneu[watermark]` "
+            "(kéo theo torch, nên không gộp vào bản đóng gói CPU gọn nhẹ này)."
         )
 
     return demo
