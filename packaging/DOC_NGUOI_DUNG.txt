@@ -43,6 +43,21 @@ TỐC ĐỘ
 App chạy bằng CPU. Trên CPU phổ thông, tạo audio nhanh gấp khoảng 2 lần
 thời lượng thật (ví dụ: 10 giây audio mất khoảng 5 giây).
 
+TEXT DÀI
+--------
+Dán bao nhiêu chữ cũng được — cả một chương sách cũng không sao. App tự
+cắt thành từng đoạn, đọc lần lượt rồi ghép lại thành một file duy nhất,
+nghỉ đúng nhịp giữa các đoạn. Bạn không phải tự chia nhỏ.
+
+Dưới ô nhập text có dòng ước tính số đoạn và thời gian xử lý. Trong lúc
+chạy có thanh tiến độ cho biết đang ở đoạn thứ mấy, và nút "Dừng" nếu
+bạn đổi ý.
+
+Lưu ý với bài rất dài:
+- Mất nhiều thời gian. Ví dụ 120.000 ký tự ~ 2 tiếng audio, xử lý ~1 tiếng.
+- File WAV rất lớn, khoảng 350 MB cho mỗi giờ audio.
+- Để trống một dòng giữa các đoạn văn sẽ cho chỗ ngắt nghe tự nhiên nhất.
+
 GẶP LỖI?
 --------
 - "Không nạp được model": kiểm tra kết nối Internet, tường lửa hoặc

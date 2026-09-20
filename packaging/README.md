@@ -127,7 +127,12 @@ venv build một lần nữa cho chắc.
   CPU phổ thông. Cần tốc độ GPU thì dùng `uv sync --extra cuda` với Web UI đầy
   đủ (`vieneu-web`) thay vì app này.
 - **Cần Internet ở lần chạy đầu** để tải model.
-- **Giới hạn 3000 ký tự** mỗi lần tạo; văn bản dài hơn cần chia nhỏ.
+- **Không giới hạn độ dài text.** Bài dài được cắt ở ranh giới đoạn (rồi câu,
+  rồi từ nếu cần) thành các đoạn ≤ 2000 ký tự, sinh lần lượt và **ghi dần**
+  xuống WAV nên RAM chỉ giữ hai đoạn. Khoảng nghỉ giữa các đoạn dùng đúng
+  `pause_pad_samples()` + `V3_GAP_SILENCE` của SDK, nên ghép lại nghe như
+  xử lý một lần. Đổi lại: bài rất dài mất hàng giờ và ra file WAV rất lớn
+  (~350 MB mỗi giờ audio) — có thanh tiến độ và nút **Dừng**.
 - Bản `.exe` **chưa được ký số**, nên SmartScreen/antivirus có thể cảnh báo.
 - **Không có watermark** trong bản đóng gói (xem §6).
 - App chạy được trên **cả gradio 5 và gradio 6** (`pyproject` khai báo
