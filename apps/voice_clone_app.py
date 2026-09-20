@@ -169,10 +169,37 @@ footer { display: none !important; }
 """
 
 
+# pyproject khai báo `gradio>=5.49.1`, nên máy này cài gradio 5 mà máy khác cài
+# gradio 6 là chuyện bình thường — app phải chạy được trên cả hai. Khác biệt ở
+# những chỗ app đụng tới:
+#   - Audio(show_download_button=...): gradio 6 bỏ hẳn (mặc định đã có nút tải).
+#   - css/theme: gradio 5 nhận ở Blocks(), gradio 6 chuyển sang launch().
+#   - launch(show_api=...): gradio 6 bỏ.
+def _gradio_major() -> int:
+    """Số major của gradio đang cài; mặc định 5 nếu không đọc được."""
+    import gradio as gr
+
+    try:
+        return int(str(gr.__version__).split(".")[0])
+    except (ValueError, IndexError):
+        return 5
+
+
+def _style_kwargs() -> dict:
+    """css + theme, để gắn vào Blocks() (gradio 5) hoặc launch() (gradio 6)."""
+    import gradio as gr
+
+    return {"css": CSS, "theme": gr.themes.Soft()}
+
+
 def build_ui():
     import gradio as gr
 
-    with gr.Blocks(title="VieNeu Voice Clone", css=CSS, theme=gr.themes.Soft()) as demo:
+    blocks_kwargs: dict = {"title": "VieNeu Voice Clone"}
+    if _gradio_major() < 6:
+        blocks_kwargs.update(_style_kwargs())
+
+    with gr.Blocks(**blocks_kwargs) as demo:
         gr.HTML(
             """
             <div class="vieneu-header">
@@ -208,7 +235,6 @@ def build_ui():
                     label="3️⃣ Kết quả (bấm ⬇ để tải file WAV)",
                     type="filepath",
                     autoplay=False,
-                    show_download_button=True,
                 )
                 status = gr.Markdown("⏳ Đang chuẩn bị model… lần chạy đầu tiên cần tải khoảng vài trăm MB.")
                 gr.Markdown(
@@ -250,13 +276,18 @@ def main() -> None:
     preload_in_background()
 
     # inbrowser: bản đóng gói tự mở trình duyệt để người dùng chỉ cần bấm một lần.
-    demo.launch(
-        server_name=os.environ.get("VIENEU_HOST", "127.0.0.1"),
-        server_port=int(os.environ.get("VIENEU_PORT", "7861")),
-        inbrowser=is_frozen() or os.environ.get("VIENEU_OPEN_BROWSER") == "1",
-        show_api=False,
-        quiet=False,
-    )
+    launch_kwargs: dict = {
+        "server_name": os.environ.get("VIENEU_HOST", "127.0.0.1"),
+        "server_port": int(os.environ.get("VIENEU_PORT", "7861")),
+        "inbrowser": is_frozen() or os.environ.get("VIENEU_OPEN_BROWSER") == "1",
+        "quiet": False,
+    }
+    if _gradio_major() >= 6:
+        launch_kwargs.update(_style_kwargs())
+    else:
+        launch_kwargs["show_api"] = False
+
+    demo.launch(**launch_kwargs)
 
 
 if __name__ == "__main__":

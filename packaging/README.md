@@ -108,6 +108,7 @@ venv build một lần nữa cho chắc.
 | Lỗi DLL của onnxruntime | Kiểm tra `collect_dynamic_libs("onnxruntime")` còn trong spec. |
 | Bundle to bất thường (>2 GB) | torch lọt vào venv build. Chạy lại với `-Clean`. |
 | Cảnh báo `Failed to collect submodules for 'vieneu.v3_turbo_serve' ... No module named 'torch'` | **Bình thường, bỏ qua.** Đó là server GPU, cố ý không đóng gói. |
+| `TypeError: Audio.__init__() got an unexpected keyword argument ...` | Khác biệt API giữa gradio 5 và 6. App đã hỗ trợ cả hai qua `_gradio_major()`; nếu thêm tham số mới cho component thì nhớ kiểm trên cả hai phiên bản. |
 | Antivirus chặn `.exe` | Thường gặp với binary PyInstaller chưa ký. Muốn phát hành rộng nên ký code (code signing certificate). |
 
 ---
@@ -120,6 +121,9 @@ venv build một lần nữa cho chắc.
 - **Cần Internet ở lần chạy đầu** để tải model.
 - **Giới hạn 3000 ký tự** mỗi lần tạo; văn bản dài hơn cần chia nhỏ.
 - Bản `.exe` **chưa được ký số**, nên SmartScreen/antivirus có thể cảnh báo.
+- App chạy được trên **cả gradio 5 và gradio 6** (`pyproject` khai báo
+  `gradio>=5.49.1`, nên `uv sync` theo lockfile ra bản 5 còn `pip install`
+  mới ra bản 6). Sửa giao diện thì kiểm trên cả hai.
 
 ## 6. Lưu ý sử dụng
 

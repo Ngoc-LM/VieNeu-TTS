@@ -43,10 +43,13 @@ jobs:
 
       - name: Chạy thử exe (smoke test)
         shell: pwsh
-        # App phục vụ Gradio trên cổng 7861. Không tải model ở bước này (mất vài
-        # trăm MB); chỉ cần chứng minh exe khởi động và trả HTTP là bundle đủ.
+        # App phục vụ Gradio trên cổng 7861.
         env:
           VIENEU_PORT: "7861"
+          # Chặn tải model: bước này chỉ cần chứng minh bundle khởi động và phục
+          # vụ được HTTP. Đồng thời kiểm luôn đường xuống cấp êm — model nạp lỗi
+          # thì app phải vẫn mở chứ không tắt.
+          HF_HUB_OFFLINE: "1"
         run: |
           $exe = "dist\VieNeuVoiceClone\VieNeuVoiceClone.exe"
           $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden
