@@ -23,7 +23,15 @@ uv sync            # cài phụ thuộc torch-free
 uv run vieneu-clone
 ```
 
-Mở http://127.0.0.1:7861. Muốn tự mở trình duyệt: đặt `VIENEU_OPEN_BROWSER=1`.
+Mở http://127.0.0.1:7861.
+
+Biến môi trường:
+
+| Biến | Mặc định | Tác dụng |
+|---|---|---|
+| `VIENEU_PORT` | `7861` | Cổng phục vụ |
+| `VIENEU_HOST` | `127.0.0.1` | Địa chỉ lắng nghe |
+| `VIENEU_OPEN_BROWSER` | bật ở bản đóng gói, tắt khi chạy từ source | `1` tự mở trình duyệt, `0` không mở (CI dùng `0`) |
 
 ## 2. Build app Windows
 

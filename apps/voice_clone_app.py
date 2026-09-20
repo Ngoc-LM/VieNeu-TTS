@@ -30,6 +30,20 @@ def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
+def should_open_browser() -> bool:
+    """Có tự mở trình duyệt khi khởi động không.
+
+    Mặc định: có, nếu đang chạy bản đóng gói (người dùng bấm đúp .exe thì mong
+    app tự hiện ra). Biến VIENEU_OPEN_BROWSER được đặt thì nó quyết định, kể cả
+    khi đang đóng gói — CI chạy chính file .exe đó để smoke test và không muốn
+    runner mọc ra vài cửa sổ trình duyệt.
+    """
+    raw = os.environ.get("VIENEU_OPEN_BROWSER")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return is_frozen()
+
+
 def app_data_dir() -> Path:
     """Thư mục ghi được, tồn tại qua các lần cập nhật app.
 
@@ -287,11 +301,12 @@ def main() -> None:
     demo = build_ui()
     preload_in_background()
 
-    # inbrowser: bản đóng gói tự mở trình duyệt để người dùng chỉ cần bấm một lần.
+    # inbrowser: xem should_open_browser() — mặc định bật ở bản đóng gói, tắt được
+    # bằng VIENEU_OPEN_BROWSER=0.
     launch_kwargs: dict = {
         "server_name": os.environ.get("VIENEU_HOST", "127.0.0.1"),
         "server_port": int(os.environ.get("VIENEU_PORT", "7861")),
-        "inbrowser": is_frozen() or os.environ.get("VIENEU_OPEN_BROWSER") == "1",
+        "inbrowser": should_open_browser(),
         "quiet": False,
     }
     if _gradio_major() >= 6:
