@@ -126,6 +126,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
    Access the UI at `http://127.0.0.1:7860`.
 
+> [!TIP]
+> **Just want voice cloning, as a standalone desktop app?** A minimal CPU-only
+> app — record/upload a 3–8s clip, type text, get a WAV — lives in
+> [`packaging/`](packaging/README.md). Run it from source with `uv run vieneu-clone`,
+> or build a self-contained Windows `.exe` (no Python needed on the target machine)
+> with `packaging\build_windows.ps1`.
+
 ---
 
 

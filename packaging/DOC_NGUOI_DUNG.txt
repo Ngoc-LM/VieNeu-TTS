@@ -1,0 +1,67 @@
+===============================================
+  VieNeu Voice Clone — hướng dẫn nhanh
+  Nhân bản giọng nói tiếng Việt (VieNeu-TTS v3 Turbo)
+===============================================
+
+CÁCH CHẠY
+---------
+1. Bấm đúp vào VieNeuVoiceClone.exe
+2. Một cửa sổ đen (console) hiện ra — đừng đóng nó, đó là app đang chạy.
+3. Trình duyệt sẽ tự mở tại http://127.0.0.1:7861
+   (nếu không tự mở, hãy tự gõ địa chỉ đó vào trình duyệt)
+4. Muốn tắt app: đóng cửa sổ đen.
+
+LẦN CHẠY ĐẦU TIÊN
+-----------------
+App cần tải model về máy (khoảng vài trăm MB) nên lần đầu sẽ lâu
+vài phút — cần có kết nối Internet. Các lần sau chạy offline được.
+
+Model được lưu tại:
+  %LOCALAPPDATA%\VieNeuVoiceClone\models
+
+CÁCH DÙNG
+---------
+1. Ở ô "Giọng mẫu": tải lên file audio 3–8 giây của giọng cần nhân bản,
+   hoặc bấm biểu tượng micro để ghi âm trực tiếp.
+2. Nhập đoạn text tiếng Việt cần đọc.
+3. Bấm "Tạo giọng nói" rồi chờ.
+4. Nghe thử ở khung kết quả, bấm nút tải xuống để lưu file WAV.
+
+File WAV cũng được lưu tự động tại:
+  %LOCALAPPDATA%\VieNeuVoiceClone\outputs
+
+ĐỂ CÓ KẾT QUẢ GIỐNG NHẤT
+------------------------
+- Clip mẫu 3–8 giây, CHỈ MỘT người nói.
+- Không có nhạc nền, không có tiếng ồn, không có tiếng vọng.
+- Nói với giọng tự nhiên, rõ ràng.
+- Có thể chèn [cười], [thở dài], [hắng giọng] vào text để thêm sắc thái
+  (tính năng thử nghiệm).
+
+TỐC ĐỘ
+------
+App chạy bằng CPU. Trên CPU phổ thông, tạo audio nhanh gấp khoảng 2 lần
+thời lượng thật (ví dụ: 10 giây audio mất khoảng 5 giây).
+
+GẶP LỖI?
+--------
+- "Không nạp được model": kiểm tra kết nối Internet, tường lửa hoặc
+  phần mềm diệt virus có đang chặn app không.
+- Trình duyệt báo không kết nối được: đợi thêm, xem cửa sổ đen đã hiện
+  dòng "Running on local URL" chưa.
+- Cổng 7861 đã bị chiếm: mở Command Prompt, chạy
+      set VIENEU_PORT=7870
+      VieNeuVoiceClone.exe
+
+LƯU Ý QUAN TRỌNG
+----------------
+Chỉ nhân bản giọng của chính bạn, hoặc giọng mà bạn đã được chủ giọng
+đồng ý rõ ràng.
+
+App này KHÔNG đóng dấu chìm (watermark) vào audio tạo ra. Tính năng
+watermark cần thư viện resemble-perth (kéo theo torch, rất nặng) nên
+không gộp vào bản đóng gói CPU gọn nhẹ này. Nếu bạn cần watermark, hãy
+chạy từ mã nguồn và cài thêm:
+      pip install vieneu[watermark]
+
+Dự án gốc: https://github.com/pnnbao97/VieNeu-TTS
