@@ -24,6 +24,12 @@ from typing import List, Optional, Tuple
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
+# Import SAU hai dòng trên (gradio đọc biến môi trường lúc import). Phải ở cấp
+# module chứ không lazy: gr.Progress() được dùng làm giá trị mặc định của tham
+# số, mà Gradio chỉ nhận ra thanh tiến độ qua `isinstance(param.default, Progress)`
+# — tạo nó bên trong hàm thì thanh tiến độ im lặng không chạy.
+import gradio as gr  # noqa: E402
+
 
 # ── Thư mục dữ liệu ────────────────────────────────────────────────────────────
 def is_frozen() -> bool:
@@ -298,7 +304,8 @@ def describe_workload(text: str) -> str:
     return line
 
 
-def synthesize(ref_audio: Optional[str], text: str, denoise: bool, progress=None):
+def synthesize(ref_audio: Optional[str], text: str, denoise: bool,
+               progress: "gr.Progress" = gr.Progress()):
     """Clone giọng từ ``ref_audio`` rồi đọc ``text``.
 
     Không giới hạn độ dài: văn bản dài được cắt đoạn, sinh lần lượt và GHI DẦN
@@ -308,13 +315,9 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool, progress=None
     nút Dừng huỷ được thật (xem ghi chú ở chỗ yield) và trạng thái cập nhật dần.
     Yield ``(None, trạng_thái)`` trong lúc chạy, ``(đường_dẫn_wav, tổng_kết)`` khi xong.
     """
-    import gradio as gr
     import numpy as np
     import soundfile as sf
     from vieneu_utils.core_utils import V3_GAP_SILENCE, pause_pad_samples
-
-    if progress is None:
-        progress = gr.Progress()
 
     if not ref_audio:
         raise gr.Error("Hãy tải lên hoặc ghi âm một clip giọng mẫu 3–8 giây trước.")
@@ -443,8 +446,6 @@ def _style_kwargs() -> dict:
 
 
 def build_ui():
-    import gradio as gr
-
     blocks_kwargs: dict = {"title": "VieNeu Voice Clone"}
     if _gradio_major() < 6:
         blocks_kwargs.update(_style_kwargs())
