@@ -12,16 +12,23 @@ tải model v3 Turbo về cache rồi dùng lại offline cho các lần sau.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 # Đặt trước khi import gradio: bản đóng gói không gọi về server analytics.
 os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
+# Import SAU hai dòng trên (gradio đọc biến môi trường lúc import). Phải ở cấp
+# module chứ không lazy: gr.Progress() được dùng làm giá trị mặc định của tham
+# số, mà Gradio chỉ nhận ra thanh tiến độ qua `isinstance(param.default, Progress)`
+# — tạo nó bên trong hàm thì thanh tiến độ im lặng không chạy.
+import gradio as gr  # noqa: E402
 
 
 # ── Thư mục dữ liệu ────────────────────────────────────────────────────────────
@@ -121,29 +128,207 @@ def preload_in_background() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
+# ── Cắt văn bản dài thành đoạn ────────────────────────────────────────────────
+# Số ký tự tối đa mỗi lần gọi infer(). KHÔNG phải giới hạn độ dài văn bản: văn
+# bản dài bao nhiêu cũng được, app tự cắt rồi ghép lại.
+#
+# Vì sao không ném cả 100k ký tự vào một lần infer()? infer() tự cắt chunk 256
+# ký tự và ghép, nên về mặt kết quả thì chạy được — nhưng nó giữ TOÀN BỘ audio
+# trong RAM rồi mới ghép: hai tiếng audio 48 kHz float32 là ~1,5 GB, cộng thêm
+# một bản sao lúc ghép nữa. Cắt đoạn rồi ghi dần xuống đĩa giữ RAM ở mức một
+# đoạn, và cho phép báo tiến độ thay vì treo hàng giờ không dấu hiệu gì.
+SEGMENT_CHARS = 2000
+
+_PARA_SPLIT_RE = re.compile(r"\n\s*\n")
+# Ranh giới câu tiếng Việt: kết thúc bằng . ! ? … rồi tới khoảng trắng.
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _split_on_words(sentence: str, max_chars: int) -> List[str]:
+    """Cắt một câu quá dài thành các mảnh <= ``max_chars`` ở ranh giới TỪ.
+
+    Lối thoát cuối cùng cho văn bản không có dấu câu. Một từ dài hơn cả
+    ``max_chars`` (chuỗi rác, URL khổng lồ) thì cắt cứng theo ký tự.
+    """
+    pieces: List[str] = []
+    buf: List[str] = []
+    buf_len = 0
+    for word in sentence.split():
+        while len(word) > max_chars:      # từ đơn lẻ dài hơn cả giới hạn
+            if buf:
+                pieces.append(" ".join(buf))
+                buf, buf_len = [], 0
+            pieces.append(word[:max_chars])
+            word = word[max_chars:]
+        if buf and buf_len + len(word) + 1 > max_chars:
+            pieces.append(" ".join(buf))
+            buf, buf_len = [], 0
+        buf.append(word)
+        buf_len += len(word) + 1
+    if buf:
+        pieces.append(" ".join(buf))
+    return pieces
+
+
+def split_into_segments(text: str, max_chars: int = SEGMENT_CHARS) -> List[Tuple[str, str]]:
+    """Cắt ``text`` thành các đoạn <= ``max_chars`` ký tự.
+
+    Trả về list ``(đoạn, loại_ranh_giới_sau_đoạn)`` với loại thuộc
+    {"para", "sentence", "minor"} — dùng để tính khoảng nghỉ khi ghép, đúng theo
+    bảng V3_GAP_SILENCE của SDK. Phần tử cuối mang loại "" (không có ranh giới sau).
+
+    Ưu tiên cắt ở ranh giới ĐOẠN, vì khoảng nghỉ giữa hai đoạn (0,70 s) đúng
+    bằng thứ SDK sẽ chèn nếu xử lý cả bài một lần — cắt ở đó thì kết quả ghép
+    lại không khác gì. Đoạn đơn lẻ dài quá thì cắt tiếp theo CÂU (0,50 s), và
+    câu đơn lẻ vẫn dài quá thì cắt theo TỪ (0,30 s — ranh giới nhỏ nhất của SDK).
+
+    Bước cắt theo từ trông thừa nhưng không phải: văn bản dán từ PDF hoặc phụ đề
+    có thể dài hàng trăm nghìn ký tự mà không có lấy một dấu chấm, và nếu để
+    nguyên thì cả khối đó rơi vào MỘT lần infer() — đúng cái vấn đề bộ nhớ mà
+    việc cắt đoạn sinh ra để tránh.
+    """
+    paras = [p.strip() for p in _PARA_SPLIT_RE.split(text or "") if p.strip()]
+    if not paras:
+        return []
+
+    # (text, gap_sau) — gap của phần tử cuối được sửa thành "" ở cuối hàm.
+    segments: List[List[str]] = []
+
+    def _flush(buf: List[str], gap: str) -> None:
+        if buf:
+            segments.append(["\n\n".join(buf), gap])
+
+    buf: List[str] = []
+    buf_len = 0
+    for para in paras:
+        if len(para) > max_chars:
+            # Đoạn này một mình đã quá dài → xả buffer rồi cắt nó theo câu.
+            _flush(buf, "para")
+            buf, buf_len = [], 0
+            para_start = len(segments)   # để chốt gap "para" sau khi xong cả đoạn
+            sent_buf: List[str] = []
+            sent_len = 0
+            for sent in _SENT_SPLIT_RE.split(para):
+                sent = sent.strip()
+                if not sent:
+                    continue
+                if len(sent) > max_chars:
+                    # Câu này một mình đã quá dài → xả buffer, cắt theo từ.
+                    if sent_buf:
+                        segments.append([" ".join(sent_buf), "sentence"])
+                        sent_buf, sent_len = [], 0
+                    pieces = _split_on_words(sent, max_chars)
+                    if pieces:
+                        for piece in pieces:
+                            segments.append([piece, "minor"])
+                        segments[-1][1] = "sentence"   # hết câu (có thể bị nâng
+                        #                                lên "para" ở cuối đoạn)
+                    continue
+                if sent_buf and sent_len + len(sent) + 1 > max_chars:
+                    segments.append([" ".join(sent_buf), "sentence"])
+                    sent_buf, sent_len = [], 0
+                sent_buf.append(sent)
+                sent_len += len(sent) + 1
+            if sent_buf:
+                segments.append([" ".join(sent_buf), "sentence"])
+            # Ranh giới sau mảnh CUỐI của đoạn này là ranh giới ĐOẠN — chốt ở đây,
+            # sau khi đã xử lý xong cả đoạn. Gán sớm hơn (ngay trong nhánh cắt câu
+            # hoặc cắt từ) thì mảnh cuối giữ gap "sentence" và ranh giới đoạn chỉ
+            # được nghỉ 0,50 s thay vì 0,70 s.
+            if len(segments) > para_start:
+                segments[-1][1] = "para"
+            continue
+
+        if buf and buf_len + len(para) + 2 > max_chars:
+            _flush(buf, "para")
+            buf, buf_len = [], 0
+        buf.append(para)
+        buf_len += len(para) + 2
+    _flush(buf, "para")
+
+    if segments:
+        segments[-1][1] = ""
+    return [(t, g) for t, g in segments]
+
+
 # ── Sinh audio ────────────────────────────────────────────────────────────────
-MAX_CHARS = 3000
 
 
-def synthesize(ref_audio: Optional[str], text: str, denoise: bool):
+def _fmt_duration(seconds: float) -> str:
+    """Giây -> chuỗi kiểu '1 giờ 12 phút' / '3 phút 5 giây' cho người đọc."""
+    seconds = int(max(0, seconds))
+    h, rem = divmod(seconds, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h} giờ {m} phút"
+    if m:
+        return f"{m} phút {sec} giây"
+    return f"{sec} giây"
+
+
+def _new_output_path() -> Path:
+    """Đường dẫn WAV mới, không đụng file cũ.
+
+    Hậu tố ngẫu nhiên: mốc thời gian tới giây thôi thì hai lần tạo sát nhau
+    (hoặc hai tab cùng bấm) sẽ ra trùng tên và file trước bị ghi đè — trong khi
+    app hứa với người dùng là mọi kết quả đều được lưu lại.
+    """
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return OUTPUT_DIR / f"vieneu_{stamp}_{uuid.uuid4().hex[:8]}.wav"
+
+
+# Ước lượng thô để báo trước cho người dùng, KHÔNG dùng vào tính toán gì khác.
+# ~15 ký tự tiếng Việt cho mỗi giây audio, và RTF ~0,5 trên CPU phổ thông (xem
+# mục Benchmarks trong README). Sai số lớn là chấp nhận được — mục đích chỉ là
+# phân biệt "vài giây" với "hơn một tiếng".
+CHARS_PER_AUDIO_SECOND = 15.0
+CPU_RTF_ESTIMATE = 0.5
+
+
+def describe_workload(text: str) -> str:
+    """Dòng gợi ý dưới ô text: bao nhiêu đoạn, dự kiến bao lâu."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    segments = split_into_segments(text)
+    est_audio = len(text) / CHARS_PER_AUDIO_SECOND
+    est_work = est_audio * CPU_RTF_ESTIMATE
+    n_chars = f"{len(text):,}".replace(",", ".")   # chỉ dấu phân cách hàng nghìn
+    line = (
+        f"{n_chars} ký tự · {len(segments)} đoạn · "
+        f"ước tính ~{_fmt_duration(est_audio)} audio, xử lý ~{_fmt_duration(est_work)}"
+    )
+    if est_work >= 600:
+        return f"⏳ {line} — khá lâu, bạn có thể bấm **Dừng** giữa chừng."
+    return line
+
+
+def synthesize(ref_audio: Optional[str], text: str, denoise: bool,
+               progress: "gr.Progress" = gr.Progress()):
     """Clone giọng từ ``ref_audio`` rồi đọc ``text``.
 
-    Trả về ``(audio_cho_player, dòng_trạng_thái)``.
+    Không giới hạn độ dài: văn bản dài được cắt đoạn, sinh lần lượt và GHI DẦN
+    xuống file WAV, nên RAM chỉ giữ một đoạn tại một thời điểm.
+
+    Là GENERATOR, không phải hàm thường: mỗi đoạn xong thì yield một lần. Nhờ đó
+    nút Dừng huỷ được thật (xem ghi chú ở chỗ yield) và trạng thái cập nhật dần.
+    Yield ``(None, trạng_thái)`` trong lúc chạy, ``(đường_dẫn_wav, tổng_kết)`` khi xong.
     """
-    import gradio as gr
+    import numpy as np
+    import soundfile as sf
+    from vieneu_utils.core_utils import V3_GAP_SILENCE, pause_pad_samples
 
     if not ref_audio:
         raise gr.Error("Hãy tải lên hoặc ghi âm một clip giọng mẫu 3–8 giây trước.")
     text = (text or "").strip()
     if not text:
         raise gr.Error("Hãy nhập đoạn text cần đọc.")
-    if len(text) > MAX_CHARS:
-        raise gr.Error(f"Text dài {len(text)} ký tự, vượt giới hạn {MAX_CHARS}. Hãy chia nhỏ.")
 
-    started = time.time()
     # Cố nạp lại thay vì nhớ lỗi cũ: thất bại lúc khởi động
     # thường chỉ là rớt mạng khi tải model, và người dùng bấm lại sau khi có
     # mạng thì phải chạy được, không bắt họ khởi động lại app.
+    progress(0.0, desc="Chuẩn bị model…")
     try:
         tts = get_tts()
     except Exception as exc:  # noqa: BLE001 — đổi thành thông báo đọc được trong UI
@@ -151,28 +336,77 @@ def synthesize(ref_audio: Optional[str], text: str, denoise: bool):
             f"Không nạp được model: {exc}\n"
             "Kiểm tra kết nối Internet (lần chạy đầu cần tải model) rồi bấm lại."
         ) from exc
-    audio = tts.infer(text, ref_audio=ref_audio, denoise=bool(denoise))
-    elapsed = time.time() - started
+
+    segments = split_into_segments(text)
+    if not segments:
+        raise gr.Error("Không tìm thấy nội dung đọc được trong text.")
 
     sr = tts.sample_rate
-    duration = len(audio) / sr if sr else 0.0
+    out_path = _new_output_path()
+    started = time.time()
+    total = len(segments)
+    n_samples = 0
+
+    # Ghi dần: giữ lại đoạn TRƯỚC để tính khoảng nghỉ với đoạn kế (pause_pad_samples
+    # cần cả hai để đo im lặng sẵn có ở đuôi/đầu), rồi mới ghi nó ra. Nhờ vậy RAM
+    # chỉ giữ hai đoạn, không phải cả bài.
+    prev_wav = None
+    prev_gap = ""
+    try:
+        with sf.SoundFile(str(out_path), "w", samplerate=sr, channels=1,
+                          subtype="PCM_16") as fh:
+            for i, (seg_text, gap) in enumerate(segments):
+                progress(
+                    i / total,
+                    desc=f"Đang sinh đoạn {i + 1}/{total}"
+                         + (f" · đã có {_fmt_duration(n_samples / sr)} audio" if n_samples else ""),
+                )
+                wav = tts.infer(seg_text, ref_audio=ref_audio, denoise=bool(denoise))
+                if prev_wav is not None:
+                    pad = pause_pad_samples(
+                        prev_wav, wav, sr, V3_GAP_SILENCE.get(prev_gap, 0.5)
+                    )
+                    fh.write(prev_wav)
+                    n_samples += len(prev_wav)
+                    if pad > 0:
+                        fh.write(np.zeros(pad, dtype=np.float32))
+                        n_samples += pad
+                prev_wav, prev_gap = wav, gap
+
+                # Điểm nhả duy nhất cho nút Dừng. Gradio KHÔNG cắt ngang được một
+                # hàm thường đang chạy (Python không kill thread giữa chừng) — huỷ
+                # một hàm thường chỉ bỏ kết quả, CPU vẫn chạy nốt hàng giờ. Với
+                # generator thì Gradio đóng generator, GeneratorExit bật lên đúng
+                # chỗ yield này, và ta dừng thật ở ranh giới đoạn.
+                if i + 1 < total:
+                    yield None, (
+                        f"⏳ Đang sinh đoạn {i + 1}/{total} · "
+                        f"đã có {_fmt_duration(n_samples / sr)} audio"
+                    )
+            if prev_wav is not None:
+                fh.write(prev_wav)
+                n_samples += len(prev_wav)
+    except BaseException:
+        # GeneratorExit (bấm Dừng) là BaseException, không phải Exception — phải
+        # bắt cả hai, nếu không bản dở dang sẽ nằm lại trong thư mục output và
+        # trông y như một kết quả hợp lệ.
+        out_path.unlink(missing_ok=True)
+        raise
+
+    progress(1.0, desc="Hoàn tất")
+    elapsed = time.time() - started
+    duration = n_samples / sr if sr else 0.0
     rtf = elapsed / duration if duration else 0.0
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    # Hậu tố ngẫu nhiên: mốc thời gian tới giây thôi thì hai lần tạo sát nhau
-    # (hoặc hai tab cùng bấm) sẽ ra trùng tên và file trước bị ghi đè — trong khi
-    # app hứa với người dùng là mọi kết quả đều được lưu lại.
-    stamp = time.strftime("%Y%m%d_%H%M%S")
-    out_path = OUTPUT_DIR / f"vieneu_{stamp}_{uuid.uuid4().hex[:8]}.wav"
-    tts.save(audio, out_path)
-
-    status = (
-        f"✅ Xong sau {elapsed:.1f}s · audio {duration:.1f}s · RTF {rtf:.2f} "
-        f"({1 / rtf:.1f}× real-time)\n📁 Đã lưu: {out_path}"
-        if rtf
-        else f"✅ Xong sau {elapsed:.1f}s\n📁 Đã lưu: {out_path}"
-    )
-    return str(out_path), status
+    parts = [
+        f"✅ Xong sau {_fmt_duration(elapsed)} · audio {_fmt_duration(duration)}",
+    ]
+    if total > 1:
+        parts.append(f"🧩 {total} đoạn, ghép tự động")
+    if rtf:
+        parts.append(f"📊 RTF {rtf:.2f} ({1 / rtf:.1f}× real-time)")
+    parts.append(f"📁 Đã lưu: {out_path}")
+    yield str(out_path), "\n".join(parts)
 
 
 # ── Giao diện ─────────────────────────────────────────────────────────────────
@@ -212,8 +446,6 @@ def _style_kwargs() -> dict:
 
 
 def build_ui():
-    import gradio as gr
-
     blocks_kwargs: dict = {"title": "VieNeu Voice Clone"}
     if _gradio_major() < 6:
         blocks_kwargs.update(_style_kwargs())
@@ -241,13 +473,16 @@ def build_ui():
                     info="Nên bật. Tắt nếu clip đã rất sạch và bạn muốn giữ nguyên chất giọng.",
                 )
                 text = gr.Textbox(
-                    label="2️⃣ Text cần đọc",
+                    label="2️⃣ Text cần đọc (dài bao nhiêu cũng được)",
                     value=SAMPLE_TEXT,
                     lines=7,
                     max_lines=20,
-                    placeholder="Nhập đoạn văn bản tiếng Việt…",
+                    placeholder="Dán cả chương sách cũng được — app tự cắt đoạn và ghép lại.",
                 )
-                generate_btn = gr.Button("🎙️ Tạo giọng nói", variant="primary", size="lg")
+                text_info = gr.Markdown("")
+                with gr.Row():
+                    generate_btn = gr.Button("🎙️ Tạo giọng nói", variant="primary", size="lg", scale=3)
+                    stop_btn = gr.Button("⏹ Dừng", variant="stop", size="lg", scale=1)
 
             with gr.Column(scale=1):
                 output_audio = gr.Audio(
@@ -261,15 +496,24 @@ def build_ui():
                     "- Clip mẫu 3–8 giây, một người nói, không nhạc nền.\n"
                     "- Ghi âm ở nơi yên tĩnh cho độ giống cao nhất.\n"
                     "- Chèn `[cười]`, `[thở dài]`, `[hắng giọng]` vào text để thêm sắc thái *(thử nghiệm)*.\n"
-                    "- File WAV được lưu tự động vào thư mục dữ liệu của app."
+                    "- File WAV được lưu tự động vào thư mục dữ liệu của app.\n"
+                    "- Text dài được cắt ở ranh giới đoạn/câu rồi ghép lại, nghỉ đúng nhịp; "
+                    "để trống một dòng giữa các đoạn sẽ cho chỗ ngắt tự nhiên nhất."
                 )
 
-        generate_btn.click(
+        # Ước lượng ngay khi gõ/dán: người dán cả chương sách cần biết trước là
+        # việc này mất hàng giờ, chứ không phải bấm rồi ngồi đoán.
+        text.change(fn=describe_workload, inputs=text, outputs=text_info, show_progress="hidden")
+
+        run_event = generate_btn.click(
             fn=synthesize,
             inputs=[ref_audio, text, denoise],
             outputs=[output_audio, status],
             api_name="synthesize",
         )
+        # Bài dài chạy hàng giờ — phải có đường thoát, không thì người dùng kẹt
+        # với việc tắt cả app.
+        stop_btn.click(fn=None, inputs=None, outputs=None, cancels=[run_event])
 
         # Người dùng chỉ được quyền dùng giọng mình có quyền sử dụng — nói rõ trong UI.
         # KHÔNG hứa watermark ở đây: bản đóng gói loại torch, mà watermark
@@ -299,6 +543,10 @@ def main() -> None:
     # từ sys.modules thay vì cùng lúc import lần đầu. Không bắt buộc, nhưng
     # tránh hẳn một lớp lỗi import khó tái hiện trong bản đóng gói.
     demo = build_ui()
+    # queue() phải bật thì gr.Progress và `cancels` mới hoạt động. Gradio 4+ tạo
+    # sẵn hàng đợi, nhưng gọi thẳng ở đây để hành vi không phụ thuộc mặc định của
+    # từng phiên bản — app này chạy trên cả gradio 5 lẫn 6.
+    demo.queue()
     preload_in_background()
 
     # inbrowser: xem should_open_browser() — mặc định bật ở bản đóng gói, tắt được

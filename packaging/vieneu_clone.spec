@@ -60,6 +60,11 @@ for pkg in ("sea_g2p", "kaldi_native_fbank", "tokenizers", "soxr", "soundfile"):
 # ── Assets của chính VieNeu (voices JSON, samples) ────────────────────────────
 datas += collect_data_files("vieneu")
 hiddenimports += collect_submodules("vieneu")
+# vieneu_utils hiện vào bundle nhờ `vieneu` import nó, nhưng app cũng tự import
+# vieneu_utils.core_utils (pause_pad_samples, V3_GAP_SILENCE) ở TRONG HÀM, lúc
+# người dùng bấm tạo giọng — smoke test chỉ mở UI nên sẽ không phát hiện nếu nó
+# thiếu. Khai báo thẳng để đừng phụ thuộc vào đường import gián tiếp.
+hiddenimports += collect_submodules("vieneu_utils")
 
 # librosa/numba nạp submodule động; huggingface_hub cần cho lần tải model đầu.
 hiddenimports += collect_submodules("huggingface_hub")
